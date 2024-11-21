@@ -1,5 +1,7 @@
 # India Elections Project
 
+Studying identity in Indian elections, and how that might change with the redistricting process in 2026
+
 ## Form 20 scraper
 
 `form20s/form20_dler.py`
