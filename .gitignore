@@ -1,0 +1,8 @@
+.venv/
+data/
+
+*.pdf
+*.ipynb
+
+!.gitkeep
+.DS_Store
