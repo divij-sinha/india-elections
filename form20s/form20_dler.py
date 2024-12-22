@@ -48,7 +48,7 @@ async def dl_state_page_with_format(
     async with AsyncClient(
         base_url=url, headers=headers, timeout=300, verify=False, **kwargs
     ) as session:
-        tasks = [link_saver(session, "delhi", url.format(item)) for item in items]
+        tasks = [link_saver(session, state, url.format(item)) for item in items]
         await asyncio.gather(*tasks)
     logging.info(f"Fetched {state}")
 
@@ -122,6 +122,13 @@ dl_delhi = partial(
     items=range(1, 8),
 )
 
+dl_kerala = partial(
+    dl_state_page_with_format,
+    state="kerala",
+    url="https://www.ceo.kerala.gov.in/ceokerala/pdf/GE-2024/LAC_WISE_RESULTS/{}.pdf",
+    items=[str(i).zfill(3) for i in range(1, 140)],
+)
+
 dl_karnataka = partial(
     dl_state_pages_with_links,
     state="karnataka",
@@ -171,11 +178,34 @@ dl_tamilnadu = partial(
     http2=True,
 )
 
+dl_westbengal = partial(
+    dl_state_pages_with_links,
+    state="westbengal",
+    urls=[
+        "https://ceowestbengal.nic.in/Candidate/164",
+    ],
+    item_filter={"positive": [], "negative": []},
+    item_lambda=lambda item: "https://ceowestbengal.nic.in/" + item,
+)
+
+dl_andhrapradesh = partial(
+    dl_state_pages_with_links,
+    state="andhrapradesh",
+    urls=[
+        "https://ceoandhra.nic.in/ceoap_new/ceo/form20_ac.html",
+    ],
+    item_filter={"positive": [], "negative": []},
+    item_lambda=lambda item: "https://ceoandhra.nic.in/ceoap_new/ceo/" + item,
+)
+
 if __name__ == "__main__":
-    # asyncio.run(dl_assam())
     # asyncio.run(dl_delhi())
     # asyncio.run(dl_karnataka())
     # asyncio.run(dl_tamilnadu())
     # asyncio.run(dl_telangana())
-    asyncio.run(dl_maharashtra())
+    # asyncio.run(dl_maharashtra())
+    # asyncio.run(dl_assam())
+    # asyncio.run(dl_westbengal())
+    # asyncio.run(dl_andhrapradesh())
+    # asyncio.run(dl_kerala())
     pass
