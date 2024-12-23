@@ -111,6 +111,16 @@ async def dl_state(state: str):
         await dl_karnataka()
     elif state == "assam":
         await dl_assam()
+    elif state == "kerala":
+        await dl_kerala()
+    elif state == "andhrapradesh":
+        await dl_andhrapradesh()
+    elif state == "westbengal":
+        await dl_westbengal()
+    elif state == "bihar":
+        await dl_bihar()
+    elif state == "himanchalpradesh":
+        await dl_himanchalpradesh
     else:
         raise NotImplementedError(f"State {state} not implemented")
 
@@ -198,6 +208,27 @@ dl_andhrapradesh = partial(
     item_lambda=lambda item: "https://ceoandhra.nic.in/ceoap_new/ceo/" + item,
 )
 
+dl_himanchalpradesh = partial(
+    dl_state_pages_with_links,
+    state="himanchalpradesh",
+    urls=[
+        "https://ceohimachal.nic.in/CommonControls/ViewCMSHtmlPage?qs=LdEF%2BAuYkB4BNe%2BBaDRW9Q%3D%3D",
+    ],
+    item_filter={"positive": ["form20"], "negative": []},
+    http2=True,
+)
+
+dl_bihar = partial(
+    dl_state_pages_with_links,
+    state="bihar",
+    urls=[
+        "https://ceobihar.nic.in/GELS2024Form20_Part1_Part2.html"
+
+    ],
+    item_filter={"positive": [], "negative": []},
+    http2=True,
+)
+
 if __name__ == "__main__":
     # asyncio.run(dl_delhi())
     # asyncio.run(dl_karnataka())
@@ -208,4 +239,6 @@ if __name__ == "__main__":
     # asyncio.run(dl_westbengal())
     # asyncio.run(dl_andhrapradesh())
     # asyncio.run(dl_kerala())
+    # asyncio.run(dl_bihar())
+    asyncio.run(dl_himanchalpradesh())
     pass
