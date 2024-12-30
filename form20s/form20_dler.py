@@ -121,6 +121,16 @@ async def dl_state(state: str):
         await dl_bihar()
     elif state == "himanchalpradesh":
         await dl_himanchalpradesh
+    elif state == "manipur":
+        await dl_manipur
+    elif state == "meghalaya":
+        await dl_meghalaya
+    elif state == "mizoram":
+        await dl_mizoram
+    elif state == "odisha":
+        await dl_odisha
+    elif state == "punjab":
+        await dl_punjab
     else:
         raise NotImplementedError(f"State {state} not implemented")
 
@@ -137,6 +147,20 @@ dl_kerala = partial(
     state="kerala",
     url="https://www.ceo.kerala.gov.in/ceokerala/pdf/GE-2024/LAC_WISE_RESULTS/{}.pdf",
     items=[str(i).zfill(3) for i in range(1, 140)],
+)
+
+dl_mizoram = partial(
+    dl_state_page_with_format,
+    state="mizoram",
+    url="https://ceo.mizoram.gov.in/storage/form_20/Form20-S16_ac_no{}.pdf",
+    items=range(1, 40),
+)
+
+dl_odisha = partial(
+    dl_state_page_with_format,
+    state="odisha",
+    url="https://ceoodisha.nic.in/repo/docs/form20_2024/loksabha/{}.pdf",
+    items=[str(i).zfill(3) for i in range(1, 147)],
 )
 
 dl_karnataka = partial(
@@ -188,6 +212,15 @@ dl_tamilnadu = partial(
     http2=True,
 )
 
+dl_punjab = partial(
+    dl_state_pages_with_links,
+    state="punjab",
+    urls=[
+        "https://ceopunjab.gov.in/pcform20?year=46"
+    ],
+    item_filter={"positive": [], "negative": []},
+)
+
 dl_westbengal = partial(
     dl_state_pages_with_links,
     state="westbengal",
@@ -229,6 +262,26 @@ dl_bihar = partial(
     http2=True,
 )
 
+dl_manipur = partial(
+    dl_state_pages_with_links,
+    state="manipur",
+    urls=[
+        "https://ceomanipur.nic.in/ResultSheets/LokSabhaElection/ge2024resultsheet"
+    ],
+    item_filter={"positive": ["form20"], "negative": []},
+    item_lambda=lambda item: "https://ceomanipur.nic.in/ResultSheets/LokSabhaElection/" + item,
+)
+
+dl_meghalaya = partial(
+    dl_state_pages_with_links,
+    state="meghalaya",
+    urls=[
+        "https://ceomeghalaya.nic.in/electionconducted/ls2024/lok-sabha-2024.html",
+    ],
+    item_filter={"positive": ["form_20"], "negative": []},
+    item_lambda=lambda item: "https://ceomeghalaya.nic.in/electionconducted/ls2024/" + item,
+)
+
 if __name__ == "__main__":
     # asyncio.run(dl_delhi())
     # asyncio.run(dl_karnataka())
@@ -240,5 +293,10 @@ if __name__ == "__main__":
     # asyncio.run(dl_andhrapradesh())
     # asyncio.run(dl_kerala())
     # asyncio.run(dl_bihar())
-    asyncio.run(dl_himanchalpradesh())
+    # asyncio.run(dl_himanchalpradesh())
+    # asyncio.run(dl_manipur())
+    # asyncio.run(dl_meghalaya())
+    # asyncio.run(dl_mizoram())
+    # asyncio.run(dl_odisha())
+    asyncio.run(dl_punjab())
     pass
