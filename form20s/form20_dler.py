@@ -113,14 +113,14 @@ async def dl_state(state: str):
         await dl_assam()
     elif state == "kerala":
         await dl_kerala()
-    elif state == "andhrapradesh":
-        await dl_andhrapradesh()
+    # elif state == "andhrapradesh":
+    #     await dl_andhrapradesh()
+    # elif state == "himachalpradesh":
+    #     await dl_himachalpradesh
     elif state == "westbengal":
         await dl_westbengal()
     elif state == "bihar":
         await dl_bihar()
-    elif state == "himanchalpradesh":
-        await dl_himanchalpradesh
     elif state == "manipur":
         await dl_manipur
     elif state == "meghalaya":
@@ -131,6 +131,8 @@ async def dl_state(state: str):
         await dl_odisha
     elif state == "punjab":
         await dl_punjab
+    elif state == "gujarat":
+        await dl_gujarat
     else:
         raise NotImplementedError(f"State {state} not implemented")
 
@@ -168,6 +170,14 @@ dl_karnataka = partial(
     state="karnataka",
     urls="https://ceo.karnataka.gov.in/327/_gallery_/en",
     item_filter={"positive": [], "negative": ["media_to_upload"]},
+)
+
+dl_gujarat = partial(
+    dl_state_pages_with_links,
+    state="gujarat",
+    urls="https://ceo.gujarat.gov.in/Home/ElectionResult",
+    item_filter={"positive": [], "negative": []},
+    item_lambda=lambda item: "https://ceo.gujarat.gov.in/ViewFile" + item,
 )
 
 dl_assam = partial(
@@ -241,9 +251,9 @@ dl_andhrapradesh = partial(
     item_lambda=lambda item: "https://ceoandhra.nic.in/ceoap_new/ceo/" + item,
 )
 
-dl_himanchalpradesh = partial(
+dl_himachalpradesh = partial(
     dl_state_pages_with_links,
-    state="himanchalpradesh",
+    state="himachalpradesh",
     urls=[
         "https://ceohimachal.nic.in/CommonControls/ViewCMSHtmlPage?qs=LdEF%2BAuYkB4BNe%2BBaDRW9Q%3D%3D",
     ],
@@ -290,13 +300,14 @@ if __name__ == "__main__":
     # asyncio.run(dl_maharashtra())
     # asyncio.run(dl_assam())
     # asyncio.run(dl_westbengal())
-    # asyncio.run(dl_andhrapradesh())
+    # asyncio.run(dl_andhrapradesh()) #only 2019
     # asyncio.run(dl_kerala())
     # asyncio.run(dl_bihar())
-    # asyncio.run(dl_himanchalpradesh())
+    # asyncio.run(dl_himachalpradesh()) #only 2019
     # asyncio.run(dl_manipur())
     # asyncio.run(dl_meghalaya())
     # asyncio.run(dl_mizoram())
     # asyncio.run(dl_odisha())
-    asyncio.run(dl_punjab())
+    # asyncio.run(dl_punjab())
+    asyncio.run(dl_gujarat())
     pass
