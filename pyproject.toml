@@ -1,0 +1,25 @@
+[project]
+name = "india-elections"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "h2>=4.2.0",
+    "httpx>=0.28.1",
+    "lxml>=5.3.1",
+    "opencv-python>=4.11.0.86",
+    "polars>=1.26.0",
+    "pytesseract>=0.3.13",
+    "python-dotenv>=1.0.1",
+    "scipy>=1.15.2",
+    "torch>=2.6.0",
+    "torchaudio>=2.6.0",
+    "torchvision>=0.21.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
+    "ipython>=9.0.2",
+]
