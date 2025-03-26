@@ -1,5 +1,10 @@
 # %%
 
+import base64
+import os
+import pathlib
+from io import BytesIO
+
 import cv2
 import numpy as np
 import torch
@@ -7,7 +12,10 @@ from PIL import Image, ImageEnhance, ImageFilter
 from scipy import ndimage
 from torchvision import transforms
 
-from pytorch_model import CharacterCNN, get_predicted_character
+from utils.claude import talk_claude
+from utils.pytorch_model import CharacterCNN, get_predicted_character
+
+current_dir = pathlib.Path(__file__).parent.resolve()
 
 
 def image_manip(image: Image) -> Image:
@@ -103,7 +111,8 @@ def remove_lines(img):
 def solve_torch(image: Image):
     device = torch.device("mps")
     model = CharacterCNN().to(device)
-    model.load_state_dict(torch.load("captcha_model.pth", map_location=device))
+    model_path = os.path.join(current_dir, "captcha_model.pth")
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
     transform = transforms.Compose(
@@ -122,3 +131,30 @@ def solve_torch(image: Image):
         predicted_char_img = get_predicted_character(output_img)
         full_text += predicted_char_img
     return full_text
+
+
+def solve_captcha_claude(image: Image):
+    buffered = BytesIO()
+    image.save(buffered, format="JPEG")
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": img_str,
+                    },
+                },
+                {
+                    "type": "text",
+                    "text": "What is the text in this image? DO NOT REPLY WITH ANYTHING ELSE. REPLY ONLY WITH THE TEXT IN THIS IMAGE. IT SHOULD BE 6 CHARACTERS ONLY. NO MORE AND NO LESS.",
+                },
+            ],
+        }
+    ]
+    resp = talk_claude(messages=messages)
+    return resp

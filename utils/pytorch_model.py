@@ -1,4 +1,5 @@
 import os
+import pathlib
 import string
 
 import polars as pl
@@ -10,6 +11,8 @@ from torchvision import transforms
 # Mapping for characters: digits then lowercase alphabets
 char_to_idx = {ch: i for i, ch in enumerate(string.digits + string.ascii_lowercase)}
 idx_to_char = {i: ch for i, ch in enumerate(string.digits + string.ascii_lowercase)}
+
+current_dir = pathlib.Path(__file__).parent.resolve()
 
 
 def get_predicted_character(output):
@@ -122,8 +125,8 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss()
 
     train_model(model, device, optimizer, criterion, train_loader, epochs=10)
-
-    torch.save(model.state_dict(), "captcha_model.pth")
+    model_path = os.path.join(current_dir, "captcha_model.pth")
+    torch.save(model.state_dict(), model_path)
 
     model.eval()
     # Testing with a sample inputs

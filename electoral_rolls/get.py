@@ -8,9 +8,8 @@ from enum import Enum
 from io import BytesIO
 
 import pytesseract
-from captcha_solve import image_manip, solve_torch
 from dotenv import load_dotenv
-from httpx import AsyncClient, HTTPError, post
+from httpx import AsyncClient, HTTPError
 from PIL import Image
 
 load_dotenv()
@@ -24,6 +23,8 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M",
     level=logging.INFO,
 )
+
+STOPCNT = 1
 
 headers = {
     "Accept": "*/*",
@@ -142,25 +143,28 @@ async def generate_captcha(session: AsyncClient):
     return await generic_get(session=session, url=url)
 
 
-# %%
-
-
 async def get_solved_captcha(session: AsyncClient, mode: str):
     captcha = await generate_captcha(session=session)
     base64_string = captcha["captcha"].split(",")[-1]
     image_data = base64.b64decode(base64_string)
     image = Image.open(BytesIO(image_data))
-    image.show()
+    # image.show()
     if mode == "manual":
         value = input("Enter the text: ")
     elif mode == "torch":
+        from utils.captcha_solve import image_manip, solve_torch
+
         new_image = image_manip(image)
         value = solve_torch(new_image)
     elif mode == "auto":
+        from utils.captcha_solve import image_manip
+
         new_image = image_manip(image)
         custom_config = r"--oem 1 --psm 8 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyz0123456789"
         value = pytesseract.image_to_string(new_image, config=custom_config)
     elif mode == "claude":
+        from utils.captcha_solve import solve_captcha_claude
+
         resp = solve_captcha_claude(image)
         value = json.loads(resp.content)["content"][0]["text"]
 
@@ -186,8 +190,10 @@ def save_result(result: dict, f_path: str):
     if result["statusCode"] == 200:
         with open(f_path + result["refId"], "wb") as f:
             f.write(base64.b64decode(result["file"]))
+        return 0
     else:
         print(result)
+        return result
 
 
 async def run_full_state(state_code: StateCode):
@@ -199,54 +205,28 @@ async def run_full_state(state_code: StateCode):
         for ac_no, ac_val in ac_nos:
             parts = await get_part_list(session, state_code, district_code, ac_no)
             part_nos = [(p["partNumber"], p["partName"]) for p in parts["payload"]]
-            cnt = 0
-            for part_no, part_val in part_nos:
-                cnt += 1
-                f_path = f"data/pdf/voter_rolls/{state_code.value}/{d_val}/{ac_val}/{part_val}/"
-                os.makedirs(f_path, exist_ok=True)
-                result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
-                save_result(result, f_path)
-                if cnt == 5:
-                    return 0
+            tasks = []
+            for part_no, part_val in part_nos[:STOPCNT]:
+                tasks.append(asyncio.create_task(save_part(state_code, district_code, d_val, ac_no, ac_val, part_val, part_no)))
+            results = await asyncio.gather(*tasks)
+            return results
+            # f_path = f"data/pdf/voter_rolls/{state_code.value}/{d_val}/{ac_val}/{part_val}/"
+            # os.makedirs(f_path, exist_ok=True)
+            # result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
+            # while result["statusCode"] == 400 and result["message"] == "Invalid Catpcha":  ## typo in captcha
+            #     result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
+            # save_result(result, f_path)
+            # if cnt == STOPCNT:
+            #     return 0
+
+
+async def save_part(state_code, district_code, d_val, ac_no, ac_val, part_val, part_no):
+    f_path = f"data/pdf/voter_rolls/{state_code.value}/{d_val}/{ac_val}/{part_val}/"
+    os.makedirs(f_path, exist_ok=True)
+    result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
+    while result["statusCode"] == 400 and result["message"] == "Invalid Catpcha":  ## typo in captcha
+        result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
+    return save_result(result, f_path)
 
 
 # %%
-def solve_captcha_claude(image: Image):
-    buffered = BytesIO()
-    image.save(buffered, format="JPEG")
-    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-    model = "claude-3-5-haiku-20241022"
-    key = os.environ["CLAUDE_KEY"]
-    headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": img_str,
-                    },
-                },
-                {
-                    "type": "text",
-                    "text": "What is the text in this image? DO NOT REPLY WITH ANYTHING ELSE. REPLY ONLY WITH THE TEXT IN THIS IMAGE. IT SHOULD BE 6 CHARACTERS ONLY. NO MORE AND NO LESS.",
-                },
-            ],
-        }
-    ]
-
-    body = json.dumps(
-        {
-            "model": model,
-            "messages": messages,
-            "max_tokens": 200,
-            "temperature": 0.0,
-        }
-    )
-
-    resp = post("https://api.anthropic.com/v1/messages", data=body, headers=headers)
-    return resp
