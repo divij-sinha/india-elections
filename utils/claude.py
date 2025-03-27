@@ -4,7 +4,7 @@ import os
 from httpx import post
 
 
-def talk_claude(messages=list):
+def talk_claude(messages: list):
     model = "claude-3-5-haiku-20241022"
     key = os.environ["CLAUDE_KEY"]
     headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
