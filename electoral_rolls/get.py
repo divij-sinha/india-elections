@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from httpx import AsyncClient, HTTPError
 from PIL import Image
 
+from utils.pickle_cache import pickle_cache
+
 load_dotenv()
 
 logging.basicConfig(
@@ -24,7 +26,10 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-STOPCNT = 1
+STOPCNT = os.environ.get("STOPCNT", 10)
+FAILURE_RATE = os.environ.get("FAILURE_RATE", 0.2)
+
+semaphore = asyncio.Semaphore(os.environ.get("SEMAPHORE", 10))
 
 headers = {
     "Accept": "*/*",
@@ -33,6 +38,8 @@ headers = {
     "Origin": "https://voters.eci.gov.in",
     "Content-Type": "application/json",
 }
+base_url = "https://voters.eci.gov.in"
+session = AsyncClient(base_url=base_url, headers=headers, timeout=300, verify=False)
 
 
 class StateCode(Enum):
@@ -91,7 +98,8 @@ def retry_decorator(func):
 
 async def generic_get(session: AsyncClient, url: str, **kwargs: str):
     url = url.format(**kwargs)
-    response = await session.get(url, headers=headers)
+    async with semaphore:
+        response = await session.get(url, headers=headers)
     logging.debug(f"Fetched {url}")
     # tree = etree.HTML(response.text)
     result = json.loads(response.text)
@@ -100,38 +108,40 @@ async def generic_get(session: AsyncClient, url: str, **kwargs: str):
 
 async def generic_post(session: AsyncClient, url: str, request_data: dict, **kwargs: str):
     url = url.format(**kwargs)
-    response = await session.post(url, headers=headers, data=json.dumps(request_data))
+    async with semaphore:
+        response = await session.post(url, headers=headers, data=json.dumps(request_data))
     logging.debug(f"Fetched {url}")
     # tree = etree.HTML(response.text)
     result = json.loads(response.text)
     return result
 
 
-base_url = "https://voters.eci.gov.in"
-session = AsyncClient(base_url=base_url, headers=headers, timeout=300, verify=False)
-
-
+@pickle_cache
 async def get_publish_roll(session: AsyncClient, state_code: StateCode):
     url = "https://gateway-voters.eci.gov.in/api/v1/printing-publish/get-publish-roll"
     request_data = {"stateCd": state_code.value}
     return await generic_post(session=session, url=url, request_data=request_data)
 
 
+@pickle_cache
 async def get_constituencies(session: AsyncClient, state_code: StateCode):
     url = "https://gateway-voters.eci.gov.in/api/v1/common/constituencies?stateCode={state_code.value}"
     return await generic_get(session=session, url=url, state_code=state_code)
 
 
+@pickle_cache
 async def get_districts(session: AsyncClient, state_code: StateCode):
     url = f"https://gateway-voters.eci.gov.in/api/v1/common/districts/{state_code.value}"
     return await generic_get(session=session, url=url, state_code=state_code)
 
 
+@pickle_cache
 async def get_acs(session: AsyncClient, district_code: str):
     url = f"https://gateway-voters.eci.gov.in/api/v1/common/acs/{district_code}"
     return await generic_get(session=session, url=url, district_code=district_code)
 
 
+@pickle_cache
 async def get_part_list(session: AsyncClient, state_code: StateCode, district_code: str, ac_no: int):
     url = "https://gateway-voters.eci.gov.in/api/v1/printing-publish/get-part-list"
     request_data = {"stateCd": state_code.value, "districtCd": district_code, "acNumber": ac_no}
@@ -148,6 +158,7 @@ async def get_solved_captcha(session: AsyncClient, mode: str):
     base64_string = captcha["captcha"].split(",")[-1]
     image_data = base64.b64decode(base64_string)
     image = Image.open(BytesIO(image_data))
+    image.save(f"data/captcha_images/raw/{captcha["id"]}.jpg")  ## For future training
     # image.show()
     if mode == "manual":
         value = input("Enter the text: ")
@@ -178,22 +189,24 @@ async def get_ge_roll(session: AsyncClient, state_code: StateCode, district_code
         "stateCd": state_code.value,
         "districtCd": district_code,
         "acNumber": ac_no,
-        "partNumber": ac_no,
+        "partNumber": part_no,
         "captcha": captcha["value"],
         "captchaId": captcha["id"],
         "langCd": "ENG",
     }
+    logging.debug(request_data)
     return await generic_post(session=session, url=url, request_data=request_data)
 
 
 def save_result(result: dict, f_path: str):
     if result["statusCode"] == 200:
+        os.makedirs(f_path, exist_ok=True)
         with open(f_path + result["refId"], "wb") as f:
             f.write(base64.b64decode(result["file"]))
         return 0
     else:
-        print(result)
-        return result
+        logging.error(f"Failed to get: {f_path} with {result}")
+        return -1
 
 
 async def run_full_state(state_code: StateCode):
@@ -202,29 +215,29 @@ async def run_full_state(state_code: StateCode):
     for district_code, d_val in district_codes:
         acs = await get_acs(session, district_code)
         ac_nos = [(a["asmblyNo"], a["asmblyName"]) for a in acs]
-        for ac_no, ac_val in ac_nos:
+        for ac_no, ac_val in ac_nos[1:]:
             parts = await get_part_list(session, state_code, district_code, ac_no)
             part_nos = [(p["partNumber"], p["partName"]) for p in parts["payload"]]
             tasks = []
             for part_no, part_val in part_nos[:STOPCNT]:
                 tasks.append(asyncio.create_task(save_part(state_code, district_code, d_val, ac_no, ac_val, part_val, part_no)))
             results = await asyncio.gather(*tasks)
-            return results
-            # f_path = f"data/pdf/voter_rolls/{state_code.value}/{d_val}/{ac_val}/{part_val}/"
-            # os.makedirs(f_path, exist_ok=True)
-            # result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
-            # while result["statusCode"] == 400 and result["message"] == "Invalid Catpcha":  ## typo in captcha
-            #     result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
-            # save_result(result, f_path)
-            # if cnt == STOPCNT:
-            #     return 0
+            if results.count(-1) / len(results) > FAILURE_RATE:
+                logging.error(f"High failure rate! for {state_code} {district_code}-{d_val} {ac_no}-{ac_val}")
+                return -1
+            return 0  ## early return for testing
+
+    return 0
 
 
 async def save_part(state_code, district_code, d_val, ac_no, ac_val, part_val, part_no):
-    f_path = f"data/pdf/voter_rolls/{state_code.value}/{d_val}/{ac_val}/{part_val}/"
-    os.makedirs(f_path, exist_ok=True)
+    f_path = f"data/pdf/voter_rolls/{state_code.value}/{district_code}-{d_val}/{ac_no}-{ac_val}/{part_no}-{part_val}/"
+    if os.path.exists(f_path):
+        logging.info(f"Already exists {f_path}")
+        return 1
     result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
     while result["statusCode"] == 400 and result["message"] == "Invalid Catpcha":  ## typo in captcha
+        logging.error("Failed captcha trying again!")
         result = await get_ge_roll(session, state_code, district_code, ac_no, part_no)
     return save_result(result, f_path)
 
