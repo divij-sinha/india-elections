@@ -16,7 +16,7 @@ table_folders = [f for f in os.listdir(csv_folder)]
 
 for folder in table_folders:
     table_csvs = [f for f in os.listdir(os.path.join(csv_folder, folder)) if f.endswith(".csv")]
-    table_csvs = sorted(table_csvs)
+    table_csvs = sorted(table_csvs, key=lambda x: [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', x)])
     df_joined = pd.DataFrame()
 
     try:
@@ -25,17 +25,27 @@ for folder in table_folders:
             df_temp = pd.read_csv(file_path, skiprows=1)
 
             df_joined = pd.concat([df_joined, df_temp], ignore_index=True)
-    
+            # if df_temp.columns[0] != "Unnamed: 0":
+            #     df_joined.insert(0, 'blank_col1', '')
+            #     df_joined.insert(1, 'blank_col2', '')
+            # print(df_temp.columns[0])
+            
     except:
         print(f"Error processing {file}")
         continue
     
+    search_text = "Total\nEVM\nVotes"
+    last_row_index = df_joined[df_joined.iloc[:, 0] == search_text].index
+
+    if not last_row_index.empty:
+        df_joined = df_joined.iloc[:last_row_index[0]].reset_index(drop=True)
+
     df_joined = df_joined.iloc[:, 2:]
+
     unnamed_cols = df_joined.columns[df_joined.columns.str.contains("Unnamed")]
-    unnamed_cols = sorted(unnamed_cols, key=lambda x: int(x.split(':')[1]))
 
     extra_cols = unnamed_cols[6:]
-    print(f"extra cols: {extra_cols}")
+
     if df_joined[extra_cols].isna().all().all():
         df_joined.drop(columns=extra_cols, inplace=True)
         unnamed_cols = unnamed_cols[:5]
@@ -46,20 +56,18 @@ for folder in table_folders:
         df_joined.rename(columns=dict(zip(columns_to_update, ["Total of Valid Votes", "No. Of Rejected Votes",
                                                             "Votes for NOTA", "Total", "No. Of Tendered Votes"
                                                             ])), inplace=True)
-        error = False
+        
+        unnamed_cols = df_joined.columns[df_joined.columns.str.contains("Unnamed")]
+        if len(unnamed_cols) == 0:
+            error = False
 
     else:
         print(unnamed_cols)
         print('error outputting', folder)
         error = True
         
+    df_joined.dropna(axis=1, how='all', inplace=True)
     df_joined = df_joined.dropna(how='all')
-
-    search_text = "(To be filled in the case of election from an assembly constituency.)"
-    row_index = df_joined[df_joined.iloc[:, 0] == search_text].index
-
-    if not row_index.empty:
-        df_joined = df_joined.drop(index=[row_index[0] - 1, row_index[0], row_index[0] + 1]).reset_index(drop=True)
 
     print('outputting processed file', folder)
     
