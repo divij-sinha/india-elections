@@ -25,10 +25,6 @@ for folder in table_folders:
             df_temp = pd.read_csv(file_path, skiprows=1)
 
             df_joined = pd.concat([df_joined, df_temp], ignore_index=True)
-            # if df_temp.columns[0] != "Unnamed: 0":
-            #     df_joined.insert(0, 'blank_col1', '')
-            #     df_joined.insert(1, 'blank_col2', '')
-            # print(df_temp.columns[0])
             
     except:
         print(f"Error processing {file}")
