@@ -2,8 +2,12 @@
 import base64
 import json
 import multiprocessing as mp
+import os
 import re
+import uuid
+from functools import partial
 from io import BytesIO
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -11,10 +15,11 @@ from pdf2image import convert_from_path
 from PIL import Image, ImageEnhance, ImageFilter
 from pytesseract import image_to_string
 
+from electoral_rolls.get import StateCode
 from utils.claude import talk_claude
 
 age_gender_pattern = re.compile("Age(.*?)Gender(.*?)$")
-name_pattern = re.compile("Name(.*?)$")
+name_pattern = re.compile(r"(?:Name)(.*?)$")
 
 # TODO: Not parsing some names, ages correctly
 
@@ -44,11 +49,18 @@ def extract_text_from_images(images: list[Image]):
         yield extract_text_from_image(image)
 
 
-def extract_text_from_image(image: Image):
+def extract_text_from_image(image: Image, lang: str | None = None, img_folder: str | None | Path = None):
+    lang = "eng" if lang is None else lang + "+eng"
     old_image = image
     image = ImageEnhance.Contrast(image).enhance(2.5)
-    text = image_to_string(image)
+    img_id = str(uuid.uuid4())
+    if img_folder is not None:
+        img_folder
+        image.save(f"{img_folder}/id-{img_id}.jpg")
+    image = image.crop((0, image.height // 5, image.width // 1.33, image.height))
+    text = image_to_string(image, lang=lang)
     d = parse_text(text)
+    d["img_id"] = img_id
     d["is_deleted_230"] = (
         np.array(
             ImageEnhance.Contrast(
@@ -65,7 +77,24 @@ def extract_text_from_image(image: Image):
 
 
 def parse_text(text: str):
-    text_lines = [_ for _ in text.splitlines() if len(_) > 0]
+    if "പ്രായം" in text:
+        text = re.sub(r"പ്രായം", "Age", text)
+    if "ലിംഗം" in text:
+        text = re.sub(r"ലിംഗം", "Gender", text)
+    if "അച്ഛന്റെ" in text:
+        text = re.sub(r"അച്ഛന്റെ", "Fathers", text)
+    if "ഭര്‍ത്താവിന്റെ" in text:
+        text = re.sub(r"ഭര്‍ത്താവിന്റെ", "Husbands", text)
+    if ("പേര്" in text) or ("പേര" in text):
+        text = re.sub(r"പേര്|പേര", "Name", text)
+    if ("സ്ത്രീ" in text) or ("സ്തീ" in text) or ("സ്ത്ര" in text):
+        text = re.sub(r"സ്ത്രീ|സ്തീ|സ്ത്ര", "Female", text)
+    if "പുരുഷന്‍" in text:
+        text = re.sub(r"പുരുഷന്‍", "Male", text)
+    if "വിട്ടു നമ്പര്" in text:
+        text = re.sub(r"വിട്ടു നമ്പര്", "Address", text)
+    text = re.sub(r"[\u200c\u200d]", "", text)
+    text_lines = [_ for _ in text.splitlines("\n") if len(_) > 0]
     d = {"Extra": ""}
     past_key = None
     for line in text_lines:
@@ -83,7 +112,7 @@ def parse_text(text: str):
             past_key = key
         elif "Name" in line:
             match = re.search(name_pattern, line)
-            d["Name"] = re.sub(r"[^a-zA-Z\s]", "", match.group(1)).strip()
+            d["Name"] = re.sub(r"[^\w\s]", "", match.group(1), flags=re.UNICODE).strip()
             past_key = "Name"
         elif past_key:
             d[past_key] += " " + line
@@ -96,6 +125,7 @@ def parse_text(text: str):
 def pdf_to_pieces(
     pdf_path: str, rolls: bool = True, last_page: bool = False, first_page: bool = False, process_polars: bool = False
 ):
+    lang = pdf_path.split(".")[-2].split("-")[-3].lower()
     images = convert_from_path(pdf_path)
 
     first_page_table = None
@@ -112,13 +142,17 @@ def pdf_to_pieces(
         resp = get_table_claude(cropped_image)
         last_page_table = json.loads(resp.content)["content"][0]["text"]
 
-    texts, roll_images = None, None, None
+    texts, roll_images = None, None
+    pdf_path = Path(pdf_path)
+    img_folder = pdf_path.parent / "roll_images"
+    img_folder.mkdir(parents=True, exist_ok=True)
 
     if rolls:
         roll_images = extract_roll_images(images[2:-2])
         texts = []
+        extract_text_from_image_lang = partial(extract_text_from_image, lang=lang, img_folder=img_folder)
         with mp.Pool(processes=7) as pool:
-            texts = pool.map(extract_text_from_image, roll_images)
+            texts = pool.map(extract_text_from_image_lang, roll_images)
 
     if process_polars:
         import polars as pl
@@ -160,3 +194,28 @@ def get_table_claude(image: Image):
     ]
     resp = talk_claude(messages=messages)
     return resp
+
+
+def process_state(state_code: StateCode):
+    root_data_dir = "data/pdf/voter_rolls"
+    dists = os.listdir(f"{root_data_dir}/{state_code.value}")
+    for dist in dists:
+        acs = os.listdir(f"{root_data_dir}/{state_code.value}/{dist}")
+        for ac in acs:
+            parts = os.listdir(f"{root_data_dir}/{state_code.value}/{dist}/{ac}")
+            for part in parts:
+                files = os.listdir(f"{root_data_dir}/{state_code.value}/{dist}/{ac}/{part}")
+                pdf_files = [file for file in files if file.endswith(".pdf")]
+                for pdf_file in pdf_files:
+                    pdf_path = f"{root_data_dir}/{state_code.value}/{dist}/{ac}/{part}/{pdf_file}"
+                    print(f"Processing {pdf_path}")
+                    data = pdf_to_pieces(pdf_path, rolls=True, last_page=False, first_page=False, process_polars=True)
+                    print(f"Processed {pdf_path}!")
+                    data["rolls"][0].write_parquet(
+                        f"{root_data_dir}/{state_code.value}/{dist}/{ac}/{part}/{pdf_file.replace('.pdf', '.parquet')}",
+                    )
+    print(f"Processed {state_code}!")
+    return data
+
+
+# %%
