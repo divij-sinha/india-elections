@@ -3,7 +3,7 @@ import re
 import pandas as pd
 import numpy as np
 
-state = "mizoram"
+state = "kerala"
 pdf_folder = os.path.join("data/pdf/ls/2024/", state)
 csv_folder = os.path.join("data/csv/raw/", state) 
 processed_csv_folder = os.path.join("data/csv/processed/", state) 
@@ -61,18 +61,18 @@ for folder in table_folders:
                                                             "Votes for NOTA", "Total", "No. Of Tendered Votes"
                                                             ])), inplace=True)
         
-        if state == "kerala" and "PRATHAPAN BRAHMAKUMAR" in df_joined.columns:
-            df_joined.columns.values[5:7] = ["PRATHAPAN", "BRAHMAKUMAR"]
-            error = False
-        else:
-            error = True
+        # if state == "kerala" and "PRATHAPAN BRAHMAKUMAR" in df_joined.columns:
+        #     df_joined.columns.values[5:7] = ["PRATHAPAN", "BRAHMAKUMAR"]
+        #     error = False
+        # else:
+        error = True
 
     else:
         print(unnamed_cols)
         print('error outputting', folder)
         error = True
         
-    df_joined.dropna(axis=1, how='all', inplace=True)
+    df_joined = df_joined.dropna()
 
     print('outputting processed file', folder)
     
