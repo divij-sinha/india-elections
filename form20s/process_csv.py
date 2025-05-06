@@ -3,7 +3,7 @@ import re
 import pandas as pd
 import numpy as np
 
-state = "kerala"
+state = "mizoram"
 pdf_folder = os.path.join("data/pdf/ls/2024/", state)
 csv_folder = os.path.join("data/csv/raw/", state) 
 processed_csv_folder = os.path.join("data/csv/processed/", state) 
@@ -37,7 +37,8 @@ for folder in table_folders:
         df_joined = pd.concat([df_joined, df_temp], ignore_index=True)
     
     search_text = "Total\nEVM\nVotes"
-    last_row_index = df_joined[df_joined.iloc[:, 0] == search_text].index
+    search_text_2 = "Total EVM\nVotes"
+    last_row_index = df_joined[(df_joined.iloc[:, 0] == search_text) | (df_joined.iloc[:, 0] == search_text_2)].index
 
     if not last_row_index.empty:
         df_joined = df_joined.iloc[:last_row_index[0]].reset_index(drop=True)
@@ -60,11 +61,6 @@ for folder in table_folders:
         df_joined.rename(columns=dict(zip(columns_to_update, ["Total of Valid Votes", "No. Of Rejected Votes",
                                                             "Votes for NOTA", "Total", "No. Of Tendered Votes"
                                                             ])), inplace=True)
-        
-        # if state == "kerala" and "PRATHAPAN BRAHMAKUMAR" in df_joined.columns:
-        #     df_joined.columns.values[5:7] = ["PRATHAPAN", "BRAHMAKUMAR"]
-        #     error = False
-        # else:
         error = True
 
     else:
