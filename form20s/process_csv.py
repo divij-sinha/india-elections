@@ -3,8 +3,7 @@ import re
 import pandas as pd
 import numpy as np
 
-state = "mizoram"
-pdf_folder = os.path.join("data/pdf/ls/2024/", state)
+state = "kerala"
 csv_folder = os.path.join("data/csv/raw/", state) 
 processed_csv_folder = os.path.join("data/csv/processed/", state) 
 
@@ -35,7 +34,7 @@ for folder in table_folders:
             ]
 
         df_joined = pd.concat([df_joined, df_temp], ignore_index=True)
-    
+        
     search_text = "Total\nEVM\nVotes"
     search_text_2 = "Total EVM\nVotes"
     last_row_index = df_joined[(df_joined.iloc[:, 0] == search_text) | (df_joined.iloc[:, 0] == search_text_2)].index
@@ -43,19 +42,28 @@ for folder in table_folders:
     if not last_row_index.empty:
         df_joined = df_joined.iloc[:last_row_index[0]].reset_index(drop=True)
 
-    df_joined = df_joined.iloc[:, 2:]
     df_joined.dropna(axis=1, how='all', inplace=True)
 
     unnamed_cols = df_joined.columns[df_joined.columns.str.contains("Unnamed")]
         
-    if len(unnamed_cols) == 5:
+    if len(unnamed_cols) == 7:
         df_joined[unnamed_cols] = df_joined[unnamed_cols].astype("object")
-        df_joined.rename(columns=dict(zip(unnamed_cols, ["Total of Valid Votes", "No. Of Rejected Votes",
+        df_joined.rename(columns=dict(zip(unnamed_cols, ["Serial No. Of Polling Station 1", "Serial No. Of Polling Station 2",
+                                                            "Total of Valid Votes", "No. Of Rejected Votes",
                                                             "Votes for NOTA", "Total", "No. Of Tendered Votes"
                                                             ])), inplace=True)
+        df_joined['Serial No. Of Polling Station 1'] = df_joined['Serial No. Of Polling Station 1'].astype(str)
+        df_joined['Serial No. Of Polling Station 2'] = df_joined['Serial No. Of Polling Station 2'].astype(str)
+        df_joined['Serial No. Of Polling Station 1'] = df_joined['Serial No. Of Polling Station 1'].str.extract(r'^(\d+)')
+        df_joined['Serial No. Of Polling Station 2'] = df_joined['Serial No. Of Polling Station 2'].str.extract(r'^(\d+)')
         error = False
         
     elif len(unnamed_cols) > 5:
+        title_cols = unnamed_cols[:2]
+        df_joined[title_cols] = df_joined[title_cols].astype("object")
+        df_joined.rename(columns=dict(zip(title_cols, ["Serial No. Of Polling Station 1", "Serial No. Of Polling Station 2"])), 
+                                      inplace=True)
+
         columns_to_update = unnamed_cols[-5:]
         df_joined[columns_to_update] = df_joined[columns_to_update].astype("object")
         df_joined.rename(columns=dict(zip(columns_to_update, ["Total of Valid Votes", "No. Of Rejected Votes",
