@@ -33,7 +33,9 @@ for folder in table_folders:
                 for col in df_temp.columns
             ]
 
-        df_joined = pd.concat([df_joined, df_temp], ignore_index=True)
+        # checks for empty final table, not caught by evm search
+        if not df_temp.iloc[:, 3:].isnull().all().all():
+            df_joined = pd.concat([df_joined, df_temp], ignore_index=True)
         
     search_text = "Total\nEVM\nVotes"
     search_text_2 = "Total EVM\nVotes"
