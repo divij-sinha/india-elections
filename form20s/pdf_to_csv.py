@@ -1,7 +1,7 @@
 import os
 import camelot
 
-state = "kerala"
+state = "manipur"
 pdf_folder = os.path.join("data/pdf/ls/2024/", state)
 csv_folder = os.path.join("data/csv/raw", state) 
 

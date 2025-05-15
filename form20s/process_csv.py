@@ -3,7 +3,7 @@ import re
 import pandas as pd
 import numpy as np
 
-state = "kerala"
+state = "manipur"
 csv_folder = os.path.join("data/csv/raw/", state) 
 processed_csv_folder = os.path.join("data/csv/processed/", state) 
 
@@ -36,13 +36,16 @@ for folder in table_folders:
         # checks for empty final table, not caught by evm search
         if not df_temp.iloc[:, 3:].isnull().all().all():
             df_joined = pd.concat([df_joined, df_temp], ignore_index=True)
-        
+
     search_text = "Total\nEVM\nVotes"
     search_text_2 = "Total EVM\nVotes"
-    last_row_index = df_joined[(df_joined.iloc[:, 0] == search_text) | (df_joined.iloc[:, 0] == search_text_2)].index
+    search_text_3 = "Total EVM Votes"
+    last_row_index = df_joined[(df_joined.iloc[:, 0] == search_text) | (df_joined.iloc[:, 0] == search_text_2) |(df_joined.iloc[:, 0] == search_text_3)].index
 
     if not last_row_index.empty:
         df_joined = df_joined.iloc[:last_row_index[0]].reset_index(drop=True)
+
+    print(df_joined) 
 
     df_joined.dropna(axis=1, how='all', inplace=True)
 
