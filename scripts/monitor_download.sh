@@ -10,6 +10,7 @@ LOG=voter_scraper.log
 STATE=.tmp/monitor_download.state
 MIN_FREE_GB=20
 MAX_FAIL_PCT=20
+MAX_MEM_PCT=80
 
 mkdir -p .tmp
 now=$(date +%s)
@@ -17,6 +18,8 @@ running=$(pgrep -f "python main.py" >/dev/null && echo 1 || echo 0)
 pdfs=$(find "$ROLL_DIR" -name '*.pdf' 2>/dev/null | wc -l)
 log_lines=$(wc -l < "$LOG")
 free_gb=$(df -BG --output=avail /mnt/storage-box-1 | tail -1 | tr -dc '0-9')
+mem_pct=$(free | awk '/^Mem:/ {printf "%d", ($2 - $7) * 100 / $2}')  ## system-wide, (total - available) / total
+proc_mem_mb=$(ps -o rss= -p "$(pgrep -f 'python main.py' | head -1)" 2>/dev/null | awk '{printf "%d", $1 / 1024}')
 
 if [ ! -f "$STATE" ]; then  ## first run: record a baseline only
     printf 'prev_pdfs=%q\nprev_lines=%q\nprev_alert=%q\n' "$pdfs" "$log_lines" "" > "$STATE"
@@ -46,10 +49,11 @@ if [ "$attempted" -gt 0 ] && [ $((failed * 100 / attempted)) -gt "$MAX_FAIL_PCT"
 fi
 [ "$high_fail" -gt 0 ] && problems+=("$high_fail ACs with high failure rate")
 [ "${free_gb:-0}" -lt "$MIN_FREE_GB" ] && problems+=("storage low: ${free_gb}G free")
+[ "$mem_pct" -gt "$MAX_MEM_PCT" ] && problems+=("memory high: ${mem_pct}% used, download ${proc_mem_mb:-?}MB")
 
 alert=$(IFS='; '; echo "${problems[*]}")
 success_rate=$([ "$attempted" -gt 0 ] && echo "$((new_pdfs * 100 / attempted))%" || echo "n/a")
-summary="success $success_rate ($new_pdfs ok, $failed failed) | total pdfs $pdfs | at ac $position"
+summary="success $success_rate ($new_pdfs ok, $failed failed) | total pdfs $pdfs | at ac $position | mem ${mem_pct}%"
 message="${alert:-ok} | $summary"
 echo "$(date '+%F %T') $message" >> .tmp/monitor_download.log
 

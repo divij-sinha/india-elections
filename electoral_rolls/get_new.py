@@ -151,18 +151,31 @@ async def get_roll_files(
 ):
     ## One captcha for the whole batch; files are keyed by the part number in their name, not by payload order
     result = await generate_published_pdfs(session, state_code, district_code, ac_no, part_nos, lang_code, roll_id)
+    if result.get("statusCode", 0) == 200 and result.get("message") == "File not found":
+        ## None of these parts exist in this roll (parts added after it was published)
+        return {"statusCode": 200, "files": {}, "not_in_roll": part_nos}
     if result.get("statusCode", 0) != 200 or not result.get("payload"):
         return result
+    ## Files are fetched in parallel, the server takes ~10s to serve each one
+    file_refs = [file_ref for file_ref in result["payload"] if file_ref is not None]
+    downloads = await asyncio.gather(
+        *[download_file(session, result["refId"], file_ref) for file_ref in file_refs], return_exceptions=True
+    )
     files = {}
-    for file_ref in result["payload"]:
-        if file_ref is None:
-            continue
-        try:
-            name, content = await download_file(session, result["refId"], file_ref)
+    download_errors = 0
+    for file_ref, download in zip(file_refs, downloads):
+        if isinstance(download, (HTTPError, ValueError, KeyError)):
+            logging.error(f"Failed to download {file_ref} with {download!r}")
+            download_errors += 1
+        elif isinstance(download, BaseException):
+            raise download
+        else:
+            name, content = download
             files[file_part_no(name)] = (name, content)
-        except (HTTPError, ValueError, KeyError) as e:
-            logging.error(f"Failed to download {file_ref} with {e!r}")
-    return {"statusCode": 200, "files": files}
+    ## Parts the server returned no file for aren't in the roll. Only trusted when every download worked,
+    ## otherwise a failed download (unknown part number) can't be told apart from a part that doesn't exist
+    not_in_roll = [p for p in part_nos if p not in files] if download_errors == 0 else []
+    return {"statusCode": 200, "files": files, "not_in_roll": not_in_roll}
 
 
 def save_result(file: tuple[str, bytes] | None, f_path: str):
@@ -229,9 +242,20 @@ def part_path(roll_id, district_code, d_val, ac_no, ac_val, part_no, part_val):
     return f"data/pdf/voter_rolls/{roll_id}/{district_code}-{d_val}/{ac_no}-{ac_val}/{part_no}-{part_val}/"
 
 
+NOT_IN_ROLL = "NOT_IN_ROLL.txt"
+
+
 def part_done(f_path):
-    ## Only a finished pdf counts, a folder holding just a leftover "...pdftmp" is downloaded again
-    return os.path.isdir(f_path) and any(f.endswith(".pdf") for f in os.listdir(f_path))
+    ## Only a finished pdf or a NOT_IN_ROLL marker counts, a folder holding just a leftover "...pdftmp" is downloaded again
+    return os.path.isdir(f_path) and any(f.endswith(".pdf") or f == NOT_IN_ROLL for f in os.listdir(f_path))
+
+
+def mark_not_in_roll(f_path, roll_id):
+    os.makedirs(f_path, exist_ok=True)
+    with open(f_path + NOT_IN_ROLL, "w") as f:
+        f.write(f"Part not in roll {roll_id}, server returned no file for it.")
+    logging.info(f"Not in roll {f_path}")
+    return 2
 
 
 async def save_parts(state_code, district_code, d_val, ac_no, ac_val, parts, lang_code, roll_id):
@@ -243,7 +267,10 @@ async def save_parts(state_code, district_code, d_val, ac_no, ac_val, parts, lan
     if "files" not in result:
         logging.error(f"Failed to get: {list(f_paths.values())} with {result}")
         return [-1] * len(parts)
-    return [save_result(result["files"].get(p), f_path) for p, f_path in f_paths.items()]
+    return [
+        mark_not_in_roll(f_path, roll_id) if p in result["not_in_roll"] else save_result(result["files"].get(p), f_path)
+        for p, f_path in f_paths.items()
+    ]
 
 
 # %%
