@@ -1,6 +1,7 @@
 
 .venv/
 data/
+/data
 
 *.pdf
 *.ipynb

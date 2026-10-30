@@ -109,7 +109,12 @@ def remove_lines(img):
 
 
 def solve_torch(image: Image.Image):
-    device = torch.device("mps")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
     model = CharacterCNN().to(device)
     model_path = os.path.join(current_dir, "captcha_model.pth")
     model.load_state_dict(torch.load(model_path, map_location=device))

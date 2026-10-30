@@ -10,6 +10,7 @@ from functools import wraps
 from io import BytesIO
 
 import pytesseract
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from dotenv import load_dotenv
 from httpx import AsyncClient, HTTPError
 from PIL import Image
@@ -174,9 +175,16 @@ async def get_acs_languages(session: AsyncClient, state_code: StateCode, distric
     return await generic_post(session=session, url=url, request_data=request_data)
 
 
+## getCaptcha responses are AES-GCM encrypted ({"data": b64(iv[12] + ciphertext)}); key is from the site's frontend JS
+CAPTCHA_KEY = base64.b64decode("SFfIO0YsOlOKawZe855n97lc4tcPkj7WWsi38yNWpalLBLZzQdkqHWYbZ0=GhSJk2raUo"[15:59])
+captcha_headers = {"appName": "VSP", "applicationName": "VSP", "PLATFORM-TYPE": "ECIWEB", "channelidobo": "VSP"}
+
+
 async def generate_captcha(session: AsyncClient):
-    url = "https://gateway-voters.eci.gov.in/api/v1/captcha-service/generateCaptcha/EROLL"
-    return await generic_get(session=session, url=url)
+    url = "https://gateway-voters.eci.gov.in/api/v1/captcha-service/getCaptcha/EROLL"
+    response = await session.get(url, headers=headers | captcha_headers)
+    raw = base64.b64decode(json.loads(response.text)["data"])
+    return json.loads(AESGCM(CAPTCHA_KEY).decrypt(raw[:12], raw[12:], None))
 
 
 async def get_solved_captcha(session: AsyncClient, mode: str):
@@ -193,7 +201,7 @@ async def get_solved_captcha(session: AsyncClient, mode: str):
             err = e
     if not success:
         logging.error(f"Failed to get captcha with {err}")
-        return {"captcha": "", "id": ""}
+        return {"captcha": "", "id": "", "value": ""}
     image = Image.open(BytesIO(image_data))
     image.save(f"data/captcha_images/raw/{captcha["id"]}.jpg")  ## For future training
     # image.show()
@@ -276,7 +284,7 @@ async def run_full_state(state_code: StateCode):
     districts = await get_districts(session, state_code)
     district_codes = [(d["districtCd"], d["districtValue"].strip()) for d in districts]
     logging.info(f"Got {len(district_codes)} districts for {state_code}")
-    for district_code, d_val in district_codes[1:2]:
+    for district_code, d_val in district_codes:
         logging.info(f"Running district {district_code}-{d_val}")
         acs = await get_acs(session, district_code)
         ac_nos = [(a["asmblyNo"], a["asmblyName"].strip()) for a in acs]

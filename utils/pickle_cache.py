@@ -28,7 +28,11 @@ def pickle_cache(func):
                 func_caches[func.__name__] = {}
 
         if relevant_args not in func_caches[func.__name__]:
-            func_caches[func.__name__][relevant_args] = await func(*args, **kwargs)
+            result = await func(*args, **kwargs)
+            ## Don't persist failed API responses, they would stick until the cache file is deleted
+            if isinstance(result, dict) and result.get("statusCode", 200) != 200:
+                return result
+            func_caches[func.__name__][relevant_args] = result
             with open(cache_path, "wb") as f:
                 pickle.dump(func_caches[func.__name__], f)
 
