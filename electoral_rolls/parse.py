@@ -1,5 +1,4 @@
 # %%
-import base64
 import json
 import multiprocessing as mp
 import os
@@ -11,12 +10,14 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import polars as pl
 from pdf2image import convert_from_path
 from PIL import Image, ImageEnhance, ImageFilter
 from pytesseract import image_to_string
 
 from electoral_rolls.get import StateCode
-from utils.claude import talk_claude
+from utils.claude import get_table_claude
+from utils.gemini import get_text_gemini
 
 age_gender_pattern = re.compile("Age(.*?)Gender(.*?)$")
 name_pattern = re.compile(r"(?:Name)(.*?)$")
@@ -24,9 +25,9 @@ name_pattern = re.compile(r"(?:Name)(.*?)$")
 # TODO: Not parsing some names, ages correctly
 
 
-def extract_roll_images(images: list[Image]):
+def extract_roll_images(images: list[Image.Image]):
     roll_images = []
-    for image in images:
+    for pgno, image in enumerate(images):
         image = np.array(image)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -39,17 +40,21 @@ def extract_roll_images(images: list[Image]):
                 if w * h > 20_000:
                     cropped_rect = image[y : (y + h), x : (x + w)]
                     cropped_rect = Image.fromarray(cropped_rect).convert("L")
-                    roll_images.append(cropped_rect)
+                    roll_images.append((pgno, cropped_rect))
 
     return roll_images
 
 
-def extract_text_from_images(images: list[Image]):
+def extract_text_from_images(images: list[Image.Image]):
     for image in images:
         yield extract_text_from_image(image)
 
 
-def extract_text_from_image(image: Image, lang: str | None = None, img_folder: str | None | Path = None):
+def extract_text_from_image(image: Image.Image | tuple, lang: str | None = None, img_folder: str | None | Path = None):
+    if isinstance(image, tuple):
+        pgno, image = image
+    else:
+        pgno = None
     lang = "eng" if lang is None else lang + "+eng"
     old_image = image
     image = ImageEnhance.Contrast(image).enhance(2.5)
@@ -58,9 +63,20 @@ def extract_text_from_image(image: Image, lang: str | None = None, img_folder: s
         img_folder
         image.save(f"{img_folder}/id-{img_id}.jpg")
     image = image.crop((0, image.height // 5, image.width // 1.33, image.height))
-    text = image_to_string(image, lang=lang)
-    d = parse_text(text)
+    if lang == "eng":
+        text = image_to_string(image, lang=lang)
+    else:
+        image = image.resize((383, int(image.height * 383 / image.width)), Image.LANCZOS)
+        image.show()
+        raise Exception("Image is too large!")
+        text = get_text_gemini(image)
+    try:
+        d = parse_text(text)
+    except Exception as e:
+        image.show()
+        raise e
     d["img_id"] = img_id
+    d["page"] = pgno
     d["is_deleted_230"] = (
         np.array(
             ImageEnhance.Contrast(
@@ -101,6 +117,10 @@ def parse_text(text: str):
         line = line.replace("Photo", "").replace("Available", "")
         if "Gender" in line:
             match = re.search(age_gender_pattern, line)
+            if match is None:
+                print(text_lines)
+                print(line)
+
             d["Age"] = re.sub(r"[^0-9]", "", match.group(1)).strip()
             d["Gender"] = re.sub(r"[^a-zA-Z\s]", "", match.group(2)).strip()
             past_key = "Gender"
@@ -148,15 +168,13 @@ def pdf_to_pieces(
     img_folder.mkdir(parents=True, exist_ok=True)
 
     if rolls:
-        roll_images = extract_roll_images(images[2:-2])
+        roll_images = extract_roll_images(images[2:-1])
         texts = []
         extract_text_from_image_lang = partial(extract_text_from_image, lang=lang, img_folder=img_folder)
         with mp.Pool(processes=7) as pool:
             texts = pool.map(extract_text_from_image_lang, roll_images)
 
     if process_polars:
-        import polars as pl
-
         if last_page:
             last_page_table = pl.read_csv(BytesIO(bytes(last_page_table, "utf-8")))
 
@@ -169,51 +187,37 @@ def pdf_to_pieces(
     return {"rolls": (texts, roll_images), "first_page": first_page_table, "last_page": last_page_table}
 
 
-def get_table_claude(image: Image):
-    buffered = BytesIO()
-    image.save(buffered, format="JPEG")
-    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": img_str,
-                    },
-                },
-                {
-                    "type": "text",
-                    "text": "What is the table in this image? DO NOT REPLY WITH ANYTHING ELSE. REPLY ONLY WITH THE TABLE IN THIS IMAGE. IT SHOULD BE IN CSV FORMAT. NO MORE AND NO LESS.",
-                },
-            ],
-        }
-    ]
-    resp = talk_claude(messages=messages)
-    return resp
-
-
 def process_state(state_code: StateCode):
     root_data_dir = "data/pdf/voter_rolls"
     dists = os.listdir(f"{root_data_dir}/{state_code.value}")
+    dists = [dist for dist in dists if os.path.isdir(f"{root_data_dir}/{state_code.value}/{dist}")]
     for dist in dists:
         acs = os.listdir(f"{root_data_dir}/{state_code.value}/{dist}")
+        acs = [ac for ac in acs if os.path.isdir(f"{root_data_dir}/{state_code.value}/{dist}/{ac}")]
         for ac in acs:
             parts = os.listdir(f"{root_data_dir}/{state_code.value}/{dist}/{ac}")
+            parts = [part for part in parts if os.path.isdir(f"{root_data_dir}/{state_code.value}/{dist}/{ac}/{part}")]
             for part in parts:
                 files = os.listdir(f"{root_data_dir}/{state_code.value}/{dist}/{ac}/{part}")
                 pdf_files = [file for file in files if file.endswith(".pdf")]
+                # skip if already processed
+                pdf_files = [file for file in pdf_files if file.replace(".pdf", ".parquet") not in files]
                 for pdf_file in pdf_files:
                     pdf_path = f"{root_data_dir}/{state_code.value}/{dist}/{ac}/{part}/{pdf_file}"
-                    print(f"Processing {pdf_path}")
                     data = pdf_to_pieces(pdf_path, rolls=True, last_page=False, first_page=False, process_polars=True)
-                    print(f"Processed {pdf_path}!")
-                    data["rolls"][0].write_parquet(
+                    df = data["rolls"][0]
+                    df.with_columns(
+                        pl.lit(dist).alias("dist"),
+                        pl.lit(ac).alias("ac"),
+                        pl.lit(part).alias("part"),
+                        pl.lit(state_code.value).alias("state"),
+                        pl.lit(pdf_file).alias("pdf_file"),
+                    ).write_parquet(
                         f"{root_data_dir}/{state_code.value}/{dist}/{ac}/{part}/{pdf_file.replace('.pdf', '.parquet')}",
                     )
+                    print(f"Saved {pdf_path} to parquet!")
+        print(f"Processed {dist} {ac}!")
+        return data
     print(f"Processed {state_code}!")
     return data
 

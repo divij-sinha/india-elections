@@ -4,7 +4,7 @@ import os
 from functools import partial
 from typing import Iterable
 
-from httpx import AsyncClient, HTTPError
+from httpx import AsyncClient, HTTPError, Limits
 from lxml import etree
 
 logging.basicConfig(
@@ -45,9 +45,7 @@ async def dl_state_page_with_format(
 ) -> None:
     logging.info(f"Fetching {state}")
     os.makedirs(f"data/pdf/ls/2024/{state}", exist_ok=True)
-    async with AsyncClient(
-        base_url=url, headers=headers, timeout=300, verify=False, **kwargs
-    ) as session:
+    async with AsyncClient(base_url=url, headers=headers, timeout=300, verify=False, **kwargs) as session:
         tasks = [link_saver(session, state, url.format(item)) for item in items]
         await asyncio.gather(*tasks)
     logging.info(f"Fetched {state}")
@@ -68,9 +66,7 @@ async def dl_state_pages_with_links(
 
     for url in urls:
         logging.info(f"Fetching {url}")
-        async with AsyncClient(
-            base_url=url, headers=headers, timeout=300, verify=False, **kwargs
-        ) as session:
+        async with AsyncClient(base_url=url, headers=headers, timeout=300, verify=False, **kwargs) as session:
             response = await session.get(url, headers=headers)
             logging.debug(f"Fetched {url}")
             tree = etree.HTML(response.text)
@@ -89,10 +85,10 @@ async def dl_state_pages_with_links(
 
 
 @retry_decorator
-async def link_saver(session: AsyncClient, state: str, url: str) -> None:
+async def link_saver(session: AsyncClient, state: str, url: str, fname: str | None = None) -> None:
     response = await session.get(url)
     if response.status_code == 200:
-        fname = url.split("/")[-1]
+        fname = fname or url.split("/")[-1]
         with open(f"data/pdf/ls/2024/{state}/{fname}", "wb") as f:
             f.write(response.read())
             logging.debug(f"Downloaded {fname}")
@@ -191,6 +187,17 @@ dl_assam = partial(
     http2=True,
 )
 
+# Wayback Machine copy of the Part I page; its links are /web/<timestamp>/https://ceoassam.nic.in/... and redirect to the PDF capture
+dl_assam_wayback = partial(
+    dl_state_pages_with_links,
+    state="_incoming/assam",
+    urls=["https://web.archive.org/web/20240609020632/https://ceoassam.nic.in/lok_sabha/2024/form20-Part_I_2024.html"],
+    item_filter={"positive": ["form20"], "negative": []},
+    item_lambda=lambda item: "https://web.archive.org" + item,
+    limits=Limits(max_connections=2),
+    follow_redirects=True,
+)
+
 dl_telangana = partial(
     dl_state_pages_with_links,
     state="telangana",
@@ -211,23 +218,30 @@ dl_maharashtra = partial(
     http2=True,
 )
 
+dl_maharashtra_2024 = partial(
+    dl_state_pages_with_links,
+    state="_incoming/maharashtra",
+    urls=["https://ceoelection.maharashtra.gov.in/ceo/Form20-PC-Election-2024.aspx"],
+    item_filter={"positive": ["form20/LS2024/"], "negative": []},
+    limits=Limits(max_connections=8),
+)
+
 dl_tamilnadu = partial(
     dl_state_pages_with_links,
     state="tamilnadu",
     urls=[
-        "https://www.elections.tn.gov.in/GELS2024_Form20.aspx",
+        # "https://www.elections.tn.gov.in/GELS2024_Form20.aspx",
         "https://www.elections.tn.gov.in/GELS2024_Form20_Part2.aspx",
     ],
     item_filter={"positive": ["form20"], "negative": []},
+    item_lambda=lambda item: "https://www.elections.tn.gov.in/" + item,
     http2=True,
 )
 
 dl_punjab = partial(
     dl_state_pages_with_links,
     state="punjab",
-    urls=[
-        "https://ceopunjab.gov.in/pcform20?year=46"
-    ],
+    urls=["https://ceopunjab.gov.in/pcform20?year=46"],
     item_filter={"positive": [], "negative": []},
 )
 
@@ -251,6 +265,15 @@ dl_andhrapradesh = partial(
     item_lambda=lambda item: "https://ceoandhra.nic.in/ceoap_new/ceo/" + item,
 )
 
+dl_andhrapradesh_2024 = partial(
+    dl_state_pages_with_links,
+    state="_incoming/andhra pradesh",
+    urls=["https://ceoandhra.nic.in/ceoap_new/ceo/Form20_PC%202024.html"],
+    item_filter={"positive": ["General Elections-2024/"], "negative": []},
+    item_lambda=lambda item: "https://ceoandhra.nic.in/ceoap_new/ceo/" + item,
+    limits=Limits(max_connections=8),
+)
+
 dl_himachalpradesh = partial(
     dl_state_pages_with_links,
     state="himachalpradesh",
@@ -263,39 +286,61 @@ dl_himachalpradesh = partial(
 
 dl_bihar = partial(
     dl_state_pages_with_links,
-    state="bihar",
-    urls=[
-        "https://ceobihar.nic.in/GELS2024Form20_Part1_Part2.html"
-
-    ],
-    item_filter={"positive": [], "negative": []},
-    http2=True,
+    state="_incoming/bihar",
+    urls=["https://ceoelection.bihar.gov.in/GELS2024Form20_Part1_Part2.html"],
+    # only what's missing: Part I for PC 27-40, Part II for PC 9, 21, 22, 26, 28-40
+    item_filter={
+        "positive": [],
+        "negative": [f"Part_1/{i:02d}-" for i in range(1, 27)]
+        + [f"Part_2/{i:02d}-" for i in range(1, 28) if i not in (9, 21, 22, 26)],
+    },
+    limits=Limits(max_connections=8),
 )
 
 dl_manipur = partial(
     dl_state_pages_with_links,
-    state="manipur",
-    urls=[
-        "https://ceomanipur.nic.in/ResultSheets/LokSabhaElection/ge2024resultsheet"
-    ],
+    state="_incoming/manipur",
+    urls=["https://ceomanipur.nic.in/ResultSheets/LokSabhaElection/ge2024resultsheet"],
     item_filter={"positive": ["form20"], "negative": []},
     item_lambda=lambda item: "https://ceomanipur.nic.in/ResultSheets/LokSabhaElection/" + item,
+    limits=Limits(max_connections=8),
 )
 
 dl_meghalaya = partial(
     dl_state_pages_with_links,
-    state="meghalaya",
+    state="_incoming/meghalaya",
     urls=[
-        "https://ceomeghalaya.nic.in/electionconducted/ls2024/lok-sabha-2024.html",
+        "https://ceomeghalaya.nic.in/electionconducted/ls2024/form20.html",
     ],
     item_filter={"positive": ["form_20"], "negative": []},
     item_lambda=lambda item: "https://ceomeghalaya.nic.in/electionconducted/ls2024/" + item,
+    limits=Limits(max_connections=8),
 )
+
+
+async def dl_gujarat_2024(state: str = "_incoming/gujarat") -> None:
+    # 2024 links are /ViewFile?fileName=<token> (no .pdf) in the Parliament Election table,
+    # so each file is named from its row: <AC no>-<AC name>.pdf
+    url = "https://ceo.gujarat.gov.in/Home/ElectionResult"
+    logging.info(f"Fetching {state}")
+    os.makedirs(f"data/pdf/ls/2024/{state}", exist_ok=True)
+    async with AsyncClient(headers=headers, timeout=300, verify=False, limits=Limits(max_connections=8)) as session:
+        response = await session.get(url)
+        tree = etree.HTML(response.text)
+        rows = tree.xpath('//h4[normalize-space()="WINNERS OF THE YEAR 2024"]/following-sibling::table[1]//tr[.//a]')
+        tasks = []
+        for row in rows:
+            ac_no, ac_name = ["".join(td.itertext()).strip() for td in row.xpath("./td")][-2:]
+            href = row.xpath(".//a/@href")[0].strip()
+            tasks.append(link_saver(session, state, "https://ceo.gujarat.gov.in" + href, f"{int(ac_no):03d}-{ac_name}.pdf"))
+        logging.info(f"Parsed {len(tasks)} items")
+        await asyncio.gather(*tasks)
+    logging.info(f"Fetched {state}")
 
 if __name__ == "__main__":
     # asyncio.run(dl_delhi())
     # asyncio.run(dl_karnataka())
-    # asyncio.run(dl_tamilnadu())
+    asyncio.run(dl_tamilnadu())
     # asyncio.run(dl_telangana())
     # asyncio.run(dl_maharashtra())
     # asyncio.run(dl_assam())

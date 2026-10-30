@@ -1,0 +1,37 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(pdftools)
+```
+
+```{r}
+fpath <- "/Users/divijsinha/Documents/projects/india-elections/data/pdf/ls/2024/karnataka/27561718701519.pdf"
+text_read <- pdf_data(fpath, font_info = T) ## text_read is a list of pages
+pg1 <- text_read[[1]] ## get first page
+```
+
+```{r}
+round_arbit <- function(x, t) {
+    return(round(x / t) * t)
+}
+
+
+pg1 %>%
+    filter(
+        font_size > 5.1,
+        font_size < 6,
+        font_name == "MPDFAA+DejaVuSerifCondensed-Bold"
+    ) %>%
+    filter(y > 156) %>%
+    filter(x > 60, x < 683) %>%
+    group_by(x) %>%
+    mutate(x_center = round_arbit(mean(x) + (width / 2), 10)) %>%
+    group_by(x_center) %>%
+    arrange(y) %>%
+    summarize(full_name = str_c(text, collapse = " ")) %>%
+    print(n = 30)
+```

@@ -18,7 +18,7 @@ from utils.pytorch_model import CharacterCNN, get_predicted_character
 current_dir = pathlib.Path(__file__).parent.resolve()
 
 
-def image_manip(image: Image) -> Image:
+def image_manip(image: Image.Image) -> Image.Image:
     image = image.filter(ImageFilter.RankFilter(rank=1, size=3))
     image = image.resize((image.width * 4, image.height * 4), Image.LANCZOS)
     image = image.split()[1]
@@ -108,7 +108,7 @@ def remove_lines(img):
 #         image.save("data/captcha_images/cropped_y/" + p)
 
 
-def solve_torch(image: Image):
+def solve_torch(image: Image.Image):
     device = torch.device("mps")
     model = CharacterCNN().to(device)
     model_path = os.path.join(current_dir, "captcha_model.pth")
@@ -133,7 +133,7 @@ def solve_torch(image: Image):
     return full_text
 
 
-def solve_captcha_claude(image: Image):
+def solve_captcha_claude(image: Image.Image):
     buffered = BytesIO()
     image.save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")

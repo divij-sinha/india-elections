@@ -180,9 +180,20 @@ async def generate_captcha(session: AsyncClient):
 
 
 async def get_solved_captcha(session: AsyncClient, mode: str):
-    captcha = await generate_captcha(session=session)
-    base64_string = captcha["captcha"].split(",")[-1]
-    image_data = base64.b64decode(base64_string)
+    success = False
+    err = None
+    for _ in range(2):
+        try:
+            captcha = await generate_captcha(session=session)
+            base64_string = captcha["captcha"].split(",")[-1]
+            image_data = base64.b64decode(base64_string)
+            success = True
+            break
+        except Exception as e:
+            err = e
+    if not success:
+        logging.error(f"Failed to get captcha with {err}")
+        return {"captcha": "", "id": ""}
     image = Image.open(BytesIO(image_data))
     image.save(f"data/captcha_images/raw/{captcha["id"]}.jpg")  ## For future training
     # image.show()
@@ -229,8 +240,9 @@ def save_result(result: dict, f_path: str):
     if result.get("statusCode", 0) == 200:
         os.makedirs(f_path, exist_ok=True)
         try:
-            with open(f_path + result["refId"], "wb") as f:
+            with open(f_path + result["refId"] + "tmp", "wb") as f:
                 f.write(base64.b64decode(result["file"]))
+            os.replace(f_path + result["refId"] + "tmp", f_path + result["refId"])
             return 0
         except Exception as e:
             if result.get("message", None) == "General Election Roll 2024 has not been published.":
@@ -253,7 +265,7 @@ def parse_lang(languages: dict):
         elif "HIN" in languages["payload"]:
             return "HIN"
         else:
-            return languages["payload"][0]
+            return list(languages["payload"].keys())[0]
     else:
         logging.error(f"Failed to get languages with {languages}")
         return "ENG"
@@ -264,7 +276,7 @@ async def run_full_state(state_code: StateCode):
     districts = await get_districts(session, state_code)
     district_codes = [(d["districtCd"], d["districtValue"].strip()) for d in districts]
     logging.info(f"Got {len(district_codes)} districts for {state_code}")
-    for district_code, d_val in district_codes:
+    for district_code, d_val in district_codes[1:2]:
         logging.info(f"Running district {district_code}-{d_val}")
         acs = await get_acs(session, district_code)
         ac_nos = [(a["asmblyNo"], a["asmblyName"].strip()) for a in acs]
