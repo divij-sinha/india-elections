@@ -5,8 +5,11 @@
 cd "$(dirname "$0")/.." || exit 1
 
 NTFY_TOPIC="${NTFY_TOPIC:-india-elections-5c37080255a56fb714}"
-ROLL_DIR="${ROLL_DIR:-data/pdf/voter_rolls/S18-2024-GEN-FIR}"
 LOG=voter_scraper.log
+## Roll and state of the current run, from its latest "Using roll S27-2024-GEN-FIR for StateCode.JHARKHAND" line
+roll_line=$(grep "Using roll " "$LOG" | tail -1)
+ROLL_DIR="${ROLL_DIR:-data/pdf/voter_rolls/$(awk '{print $(NF-2)}' <<< "$roll_line")}"
+state_name=$(awk '{print $NF}' <<< "$roll_line")
 STATE=.tmp/monitor_download.state
 MIN_FREE_GB=20
 MAX_FAIL_PCT=20
@@ -35,7 +38,7 @@ position=$(grep "Running ac " "$LOG" | tail -1 | sed 's/.*Running ac //')
 
 problems=()
 if [ "$running" = 0 ]; then
-    if grep -q "Finished running full state" nohup.out 2>/dev/null; then
+    if grep -q "Finished running full state for $state_name" nohup.out 2>/dev/null; then
         problems+=("download finished")
     else
         problems+=("download process not running: $(grep -v -i warn nohup.out 2>/dev/null | tail -1 | cut -c1-80)")
@@ -59,6 +62,6 @@ echo "$(date '+%F %T') $message" >> .tmp/monitor_download.log
 
 ## Problems get high priority so they stand out from the routine "ok" pushes
 priority=$([ -n "$alert" ] && echo high || echo low)
-curl -s -m 20 -H "Title: Electoral roll download" -H "Priority: $priority" -d "$message" "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
+curl -s -m 20 -H "Title: Electoral roll download ($(hostname))" -H "Priority: $priority" -d "$message" "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
 
 printf 'prev_pdfs=%q\nprev_lines=%q\nprev_alert=%q\n' "$pdfs" "$log_lines" "$alert" > "$STATE"

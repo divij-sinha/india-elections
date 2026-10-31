@@ -6,12 +6,14 @@ from functools import wraps
 from httpx import AsyncClient
 
 func_caches = {}
+## On local disk, not data/ (a shared storage box): each process rewrites whole files, so machines sharing one would clobber each other
+CACHE_DIR = ".cache"
 
 
 def pickle_cache(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
-        cache_path = f"data/.cache/{func.__name__}.pickle"
+        cache_path = f"{CACHE_DIR}/{func.__name__}.pickle"
 
         sig = inspect.signature(func)
         relevant_args = {}
@@ -33,6 +35,7 @@ def pickle_cache(func):
             if isinstance(result, dict) and result.get("statusCode", 200) != 200:
                 return result
             func_caches[func.__name__][relevant_args] = result
+            os.makedirs(CACHE_DIR, exist_ok=True)
             with open(cache_path, "wb") as f:
                 pickle.dump(func_caches[func.__name__], f)
 
