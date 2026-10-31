@@ -6,8 +6,9 @@ from functools import wraps
 from httpx import AsyncClient
 
 func_caches = {}
-## On local disk, not data/ (a shared storage box): each process rewrites whole files, so machines sharing one would clobber each other
-CACHE_DIR = ".cache"
+## On local disk, not data/ (a shared storage box): each process rewrites whole files, so processes sharing one would clobber
+## each other. Parallel runs on one machine each get their own CACHE_DIR (scripts/run_states.sh sets it)
+CACHE_DIR = os.environ.get("CACHE_DIR", ".cache")
 
 
 def pickle_cache(func):

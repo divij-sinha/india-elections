@@ -20,7 +20,7 @@ from utils.pickle_cache import pickle_cache
 load_dotenv()
 
 logging.basicConfig(
-    filename="voter_scraper.log",
+    filename=os.environ.get("VOTER_LOG", "voter_scraper.log"),  ## per-state log when several run side by side
     encoding="utf-8",
     filemode="a",
     format="{asctime} - {levelname} - {message}",
