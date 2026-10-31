@@ -203,7 +203,10 @@ async def get_solved_captcha(session: AsyncClient, mode: str):
         logging.error(f"Failed to get captcha with {err}")
         return {"captcha": "", "id": "", "value": ""}
     image = Image.open(BytesIO(image_data))
-    image.save(f"data/captcha_images/raw/{captcha["id"]}.jpg")  ## For future training
+    try:  ## For future training; data/ is a network mount, so a hiccup there mustn't kill the run
+        image.save(f"data/captcha_images/raw/{captcha["id"]}.jpg")
+    except OSError as e:
+        logging.warning(f"Could not save captcha image: {e}")
     # image.show()
     if mode == "manual":
         value = input("Enter the text: ")
