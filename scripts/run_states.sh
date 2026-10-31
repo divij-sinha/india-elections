@@ -148,7 +148,9 @@ slot() {
 }
 
 rm -f "$RUN/stopping"
-rm -rf "$RUN/slots"; mkdir -p "$RUN/slots"
+## Each slot keeps its server across runner restarts: reconnecting to it doesn't take another of the account's
+## connections while the old sessions are still held. Servers that failed get another chance.
+mkdir -p "$RUN/slots"; rm -f "$RUN"/slots/*.failed
 stop() {
     touch "$RUN/stopping"  ## a file, not a variable: the slots are subshells and wouldn't see the change
     for d in "$RUN"/*/pid; do [ -e "$d" ] && kill "$(cat "$d")" 2>/dev/null; done  ## the downloads

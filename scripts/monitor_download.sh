@@ -12,7 +12,7 @@ if [ "${1:-}" = "--all" ]; then
 fi
 RUN_DIR="${1:-}"  ## a .runner/<STATE> dir, or empty for a single `nohup uv run main.py` run
 
-NTFY_TOPIC="${NTFY_TOPIC:-india-elections-5c37080255a56fb714}"
+NTFY_TOPIC="${NTFY_TOPIC-india-elections-5c37080255a56fb714}"  ## empty: no pushes (testing)
 if [ -n "$RUN_DIR" ]; then
     LOG=$RUN_DIR/voter_scraper.log NOHUP=$RUN_DIR/out.log STATE=$RUN_DIR/monitor.state
     PROC_PAT="main.py $(basename "$RUN_DIR")\$" TITLE="$(basename "$RUN_DIR") on $(hostname)"
@@ -23,7 +23,6 @@ fi
 [ -f "$LOG" ] || exit 0  ## nothing logged yet
 ## Roll and state of the current run, from its latest "Using roll S27-2024-GEN-FIR for StateCode.JHARKHAND" line
 roll_line=$(grep "Using roll " "$LOG" | tail -1)
-ROLL_DIR="${ROLL_DIR:-data/pdf/voter_rolls/$(awk '{print $(NF-2)}' <<< "$roll_line")}"
 state_name=$(awk '{print $NF}' <<< "$roll_line")
 MIN_FREE_GB=20
 MAX_FAIL_PCT=20
@@ -32,20 +31,24 @@ MAX_MEM_PCT=80
 mkdir -p .tmp
 now=$(date +%s)
 running=$(pgrep -f "$PROC_PAT" >/dev/null && echo 1 || echo 0)
-pdfs=$(find "$ROLL_DIR" -name '*.pdf' 2>/dev/null | wc -l)
+## From the log, not `find` on the storage box: listing tens of thousands of part dirs over CIFS takes minutes per state
+pdfs=$(grep -c " - Saved " "$LOG")  ## saved by the runs in this log
+marked=$(grep -c " - Not in roll " "$LOG")
 log_lines=$(wc -l < "$LOG")
 free_gb=$(df -BG --output=avail /mnt/storage-box-1 | tail -1 | tr -dc '0-9')
 mem_pct=$(free | awk '/^Mem:/ {printf "%d", ($2 - $7) * 100 / $2}')  ## system-wide, (total - available) / total
 proc_mem_mb=$(ps -o rss= -p "$(pgrep -f "$PROC_PAT" | head -1)" 2>/dev/null | awk '{printf "%d", $1 / 1024}')
 
-if [ ! -f "$STATE" ]; then  ## first run: record a baseline only
-    printf 'prev_pdfs=%q\nprev_lines=%q\nprev_alert=%q\n' "$pdfs" "$log_lines" "" > "$STATE"
+## First run, or a state file from before counts came from the log (prev_saved missing): record a baseline only
+if [ ! -f "$STATE" ] || ! grep -q '^prev_saved=' "$STATE"; then
+    printf 'prev_saved=%q\nprev_marked=%q\nprev_lines=%q\nprev_alert=%q\n' "$pdfs" "$marked" "$log_lines" "" > "$STATE"
     exit 0
 fi
 . "$STATE"
 
 new_log=$(tail -n +$((prev_lines + 1)) "$LOG")
-new_pdfs=$((pdfs - prev_pdfs))
+new_pdfs=$((pdfs - prev_saved))
+new_marked=$((marked - prev_marked))
 failed=$(grep -c "Failed to get: \|Failed to save " <<< "$new_log")
 high_fail=$(grep -c "High failure rate" <<< "$new_log")
 position=$(grep "Running ac " "$LOG" | tail -1 | sed 's/.*Running ac //')
@@ -57,8 +60,8 @@ if [ "$running" = 0 ]; then
     else
         problems+=("download process not running: $(grep -v -i warn "$NOHUP" 2>/dev/null | tail -1 | cut -c1-80)")
     fi
-elif [ "$new_pdfs" -le 0 ]; then
-    problems+=("stalled, no new pdfs since last check")
+elif [ $((new_pdfs + new_marked)) -le 0 ]; then
+    problems+=("stalled, no new pdfs or NOT_IN_ROLL markers since last check")
 fi
 attempted=$((new_pdfs + failed))
 if [ "$attempted" -gt 0 ] && [ $((failed * 100 / attempted)) -gt "$MAX_FAIL_PCT" ]; then
@@ -70,12 +73,12 @@ fi
 
 alert=$(IFS='; '; echo "${problems[*]}")
 success_rate=$([ "$attempted" -gt 0 ] && echo "$((new_pdfs * 100 / attempted))%" || echo "n/a")
-summary="success $success_rate ($new_pdfs ok, $failed failed) | total pdfs $pdfs | at ac $position | mem ${mem_pct}%"
+summary="success $success_rate ($new_pdfs ok, $failed failed, $new_marked not in roll) | saved this run $pdfs | at ac $position | mem ${mem_pct}%"
 message="${alert:-ok} | $summary"
 echo "$(date '+%F %T') ${RUN_DIR:+$(basename "$RUN_DIR") }$message" >> .tmp/monitor_download.log
 
 ## Problems get high priority so they stand out from the routine "ok" pushes
 priority=$([ -n "$alert" ] && echo high || echo low)
-curl -s -m 20 -H "Title: Electoral roll download ($TITLE)" -H "Priority: $priority" -d "$message" "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
+[ -z "$NTFY_TOPIC" ] || curl -s -m 20 -H "Title: Electoral roll download ($TITLE)" -H "Priority: $priority" -d "$message" "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
 
-printf 'prev_pdfs=%q\nprev_lines=%q\nprev_alert=%q\n' "$pdfs" "$log_lines" "$alert" > "$STATE"
+printf 'prev_saved=%q\nprev_marked=%q\nprev_lines=%q\nprev_alert=%q\n' "$pdfs" "$marked" "$log_lines" "$alert" > "$STATE"

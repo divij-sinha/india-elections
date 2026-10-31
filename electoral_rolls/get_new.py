@@ -188,6 +188,7 @@ def save_result(file: tuple[str, bytes] | None, f_path: str):
         with open(f_path + name + "tmp", "wb") as f:
             f.write(content)
         os.replace(f_path + name + "tmp", f_path + name)
+        logging.info(f"Saved {f_path}{name}")  ## scripts/monitor_download.sh counts these instead of listing the storage box
         return 0
     except Exception as e:
         logging.error(f"Failed to save {f_path} with error {e}")
