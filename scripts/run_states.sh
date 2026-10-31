@@ -72,17 +72,28 @@ pop() { flock "$QUEUE.lock" bash -c 'head -1 "$1" | grep . && sed -i 1d "$1"' _ 
 push_front() { flock "$QUEUE.lock" bash -c '{ echo "$2"; cat "$1"; } > "$1.tmp" && mv "$1.tmp" "$1"' _ "$QUEUE" "$1"; }
 push_back() { flock "$QUEUE.lock" bash -c 'echo "$2" >> "$1"' _ "$QUEUE" "$1"; }
 
-## Brings up ns's tunnel on the least-loaded server that no slot is on. .runner/slots/<ns> holds each slot's server;
-## a slot's own current server counts as taken too, so a restart after a crash moves it to a different one.
+## Brings up ns's tunnel: on the slot's current server first (reconnecting there doesn't use up another of the
+## account's simultaneous connections, NordVPN allows ~10 and seems to hold dropped sessions for a while), else on up to
+## 3 of the least-loaded servers no slot is on. .runner/slots/<ns> holds the slot's server, <ns>.failed the servers that
+## didn't work for it; both count as taken for every slot.
 tunnel_up() {
-    local ns=$1 server
-    server=$(flock "$RUN/slots.lock" bash -c '
-        used=$(cat "$2"/* 2>/dev/null)
-        for s in $(scripts/vpn_ns.sh servers); do
-            grep -qxF "$s" <<< "$used" || { echo "$s" > "$2/$1"; echo "$s"; exit 0; }
-        done
-        exit 1' _ "$ns" "$RUN/slots") || { echo "no free vpn server for $ns" >&2; return 1; }
-    scripts/vpn_ns.sh up "$ns" "$server"
+    local ns=$1 server _
+    server=$(cat "$RUN/slots/$ns" 2>/dev/null)
+    if [ -n "$server" ]; then
+        scripts/vpn_ns.sh up "$ns" "$server" && return 0
+        echo "$server" >> "$RUN/slots/$ns.failed"
+    fi
+    for _ in 1 2 3; do
+        server=$(flock "$RUN/slots.lock" bash -c '
+            used=$(cat "$2"/* 2>/dev/null)
+            for s in $(scripts/vpn_ns.sh servers); do
+                grep -qxF "$s" <<< "$used" || { echo "$s" > "$2/$1"; echo "$s"; exit 0; }
+            done
+            exit 1' _ "$ns" "$RUN/slots") || { echo "no free vpn server for $ns" >&2; return 1; }
+        scripts/vpn_ns.sh up "$ns" "$server" && return 0
+        echo "$server" >> "$RUN/slots/$ns.failed"
+    done
+    return 1
 }
 
 ## One round of one state, retrying crashes on a fresh tunnel. Returns 0 done, 3 not published, 2 runner stopping,
@@ -93,6 +104,7 @@ run_state() {
     [ -d .cache ] && cp -rn .cache/. "$dir/cache/" 2>/dev/null  ## seed the API cache from earlier single runs
     echo "$ns" > "$dir/running"
     for ((tries = 0; ; tries++)); do
+        [ -e "$RUN/stopping" ] && { rc=2; break; }  ## also checked here: a stop can come during the pause before a retry
         echo "=== round $round try $((tries + 1)) $(date '+%F %T')" >> "$dir/out.log"
         # shellcheck disable=SC2086  ## NETNS_EXEC and ROLL_CMD are command lines
         $NETNS_EXEC env VOTER_LOG="$dir/voter_scraper.log" CACHE_DIR="$dir/cache" \
@@ -105,8 +117,9 @@ run_state() {
         [ -e "$RUN/stopping" ] && { rc=2; break; }
         [ "$tries" -ge "$RETRIES" ] && { rc=1; break; }
         PRIORITY=high log "$state crashed (exit $rc, round $round), retry $((tries + 1))/$RETRIES: $(grep -v -i warn "$dir/out.log" | tail -1 | cut -c1-100)"
-        [ "$VPN" = 0 ] || tunnel_up "$ns" >> "$RUN/status.log" 2>&1  ## fresh tunnel on another server, in case it was the cause
-        sleep 30
+        for _ in {1..30}; do [ -e "$RUN/stopping" ] && break; sleep 1; done  ## pause, but don't hold up a stop
+        [ -e "$RUN/stopping" ] && { rc=2; break; }
+        [ "$VPN" = 0 ] || tunnel_up "$ns" >> "$RUN/status.log" 2>&1  ## fresh tunnel, in case it was the cause
     done
     rm -f "$dir/running"
     return "$rc"
@@ -142,19 +155,24 @@ stop() {
 }
 trap stop INT TERM
 
-namespaces=()
+slot_pids=()
 for ((i = 1; i <= SLOTS; i++)); do
+    [ -e "$RUN/stopping" ] && break
     ns="roll$i"
     if [ "$VPN" = 1 ]; then
         tunnel_up "$ns" 2>&1 | tee -a "$RUN/status.log" || { PRIORITY=high log "tunnel $ns failed to come up, skipping slot"; continue; }
-        namespaces+=("$ns")
     fi
     slot "$ns" &
+    slot_pids+=($!)
 done
-wait  ## returns early on a signal: stop() has run, wait again for the slots to finish up
-wait
+## wait returns early on every signal (stop() has run): keep waiting until every slot has really finished, so the
+## tunnels aren't taken down and the stop flag isn't cleared under a slot that is still running
+for pid in "${slot_pids[@]}"; do
+    while kill -0 "$pid" 2>/dev/null; do wait "$pid"; done
+done
 
-for ns in "${namespaces[@]}"; do scripts/vpn_ns.sh down "$ns"; done
+## Every slot's namespace, also one whose tunnel failed at startup or on a restart
+[ "$VPN" = 0 ] || for ((i = 1; i <= SLOTS; i++)); do scripts/vpn_ns.sh down "roll$i"; done
 count() { cat "$1" 2>/dev/null | grep -c .; }
 log "runner exiting: rounds done $(count "$RUN/done"), failed $(count "$RUN/failed"), skipped $(count "$RUN/skipped"), still queued $(count "$QUEUE")"
 rm -f "$RUN/pid" "$RUN/stopping"
