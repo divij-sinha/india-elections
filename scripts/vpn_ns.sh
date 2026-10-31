@@ -4,6 +4,7 @@
 #   scripts/vpn_ns.sh up <name> [server-hostname]   ## no server: the Nth least-loaded India server, N from the name's digits
 #   scripts/vpn_ns.sh down <name>
 #   scripts/vpn_ns.sh ip <name>                     ## public IP seen from inside
+#   scripts/vpn_ns.sh servers                       ## recommended server hostnames, least loaded first
 # Needs root, wireguard-tools (`apt install wireguard-tools`) and the account's NordLynx private key in $NORD_KEY_FILE.
 # The key must live under /etc/wireguard/: Ubuntu's AppArmor profile for `wg` denies it reading key files elsewhere,
 # even as root ("fopen: Permission denied"). Get it once, either from an access token on the Nord account page
@@ -22,7 +23,11 @@ NORD_DNS="103.86.96.100"
 CLIENT_ADDR="10.5.0.2/32"  ## NordLynx gives every client this address
 API="https://api.nordvpn.com/v1/servers/recommendations?filters\[country_id\]=$NORD_COUNTRY_ID&filters\[servers_technologies\]\[identifier\]=wireguard_udp&limit=30"
 
-cmd="${1:?usage: vpn_ns.sh up|down|ip <name> [server]}"
+cmd="${1:?usage: vpn_ns.sh up|down|ip <name> [server] | servers}"
+if [ "$cmd" = servers ]; then  ## hostnames of the recommended wireguard servers, least loaded first
+    curl -s -m 30 "$API" | python3 -c 'import sys, json; [print(s["hostname"]) for s in json.load(sys.stdin)]'
+    exit
+fi
 ns="${2:?namespace name needed}"
 wg_if="wg-$ns"
 
